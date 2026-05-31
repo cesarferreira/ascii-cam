@@ -68,21 +68,6 @@ pub fn center_block(text: &str, width: usize, height: usize) -> String {
     out.join("\n")
 }
 
-pub fn top_align_block(text: &str, width: usize, height: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    let content_height = lines.len().min(height);
-    let mut out = Vec::with_capacity(height);
-
-    for line in lines.iter().take(content_height) {
-        out.push(center_ansi_line(line, width));
-    }
-    for _ in content_height..height {
-        out.push(pad_ansi_line("", width));
-    }
-
-    out.join("\n")
-}
-
 pub fn center_ansi_line(line: &str, width: usize) -> String {
     let visible = visible_width(line);
     if visible >= width {
@@ -90,16 +75,7 @@ pub fn center_ansi_line(line: &str, width: usize) -> String {
     }
     let left = (width - visible) / 2;
     let right = width - visible - left;
-    if line.contains('\x1b') {
-        format!(
-            "{}{}\x1b[0m{}\x1b[K",
-            " ".repeat(left),
-            line,
-            " ".repeat(right)
-        )
-    } else {
-        format!("{}{}{}\x1b[K", " ".repeat(left), line, " ".repeat(right))
-    }
+    format!("{}{}{}\x1b[K", " ".repeat(left), line, " ".repeat(right))
 }
 
 pub fn visible_width(text: &str) -> usize {

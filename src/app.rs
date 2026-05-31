@@ -23,7 +23,7 @@ use crate::render::{
     TOP_BAR_LINES, compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
-use crate::ui::{Shortcut, center_ansi_line, pad_ansi_line, shortcut_bar, top_align_block};
+use crate::ui::{Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
@@ -381,17 +381,23 @@ impl LiveApp {
                 Print(self.settings_overlay(term_cols))
             )?;
         } else {
-            let video = top_align_block(
-                &rendered.terminal_text(),
-                term_cols as usize,
-                image_rows as usize,
-            );
             execute!(
                 out,
                 MoveTo(0, 0),
-                Print(self.status_bar(term_cols, fps_actual)),
+                Print(self.status_bar(term_cols, fps_actual))
+            )?;
+            execute!(
+                out,
                 MoveTo(0, TOP_BAR_LINES),
-                Print(video),
+                Print(center_block(
+                    &rendered.terminal_text(),
+                    term_cols as usize,
+                    image_rows as usize
+                )),
+                Clear(ClearType::FromCursorDown)
+            )?;
+            execute!(
+                out,
                 MoveTo(0, TOP_BAR_LINES + image_rows),
                 Print(self.shortcut_bar(term_cols))
             )?;
