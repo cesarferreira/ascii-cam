@@ -68,7 +68,7 @@ pub fn center_block(text: &str, width: usize, height: usize) -> String {
     out.join("\n")
 }
 
-fn center_ansi_line(line: &str, width: usize) -> String {
+pub fn center_ansi_line(line: &str, width: usize) -> String {
     let visible = visible_width(line);
     if visible >= width {
         return pad_ansi_line(line, width);

@@ -23,7 +23,7 @@ use crate::render::{
     compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
-use crate::ui::{Shortcut, center_block, pad_ansi_line, shortcut_bar};
+use crate::ui::{Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
@@ -400,22 +400,19 @@ impl LiveApp {
     }
 
     fn hud(&self, term_cols: u16, fps_actual: f32) -> String {
-        let rec = if self.encoder.is_some() { " REC" } else { "" };
-        let line1 = format!(
-            " ASCII-CAM | {:>5.1} fps | {} | {}{}",
+        let rec = if self.encoder.is_some() { " | REC" } else { "" };
+        let status = format!(
+            "ASCII-CAM | {:>5.1} fps | {} | {} | contrast {:>3.1} | brightness {:+4} | rotation {} | invert {}{}",
             fps_actual,
             self.color_mode.label(),
             self.preset.label(),
-            rec
-        );
-        let line2 = format!(
-            " contrast {:>3.1} | brightness {:+4} | rotation {} | invert {}",
             self.contrast,
             self.brightness,
             self.rotation * 90,
-            if self.invert { "on" } else { "off" }
+            if self.invert { "on" } else { "off" },
+            rec
         );
-        let line3 = shortcut_bar(&[
+        let shortcuts = shortcut_bar(&[
             Shortcut::new("1", "invert"),
             Shortcut::new("2", "rotate"),
             Shortcut::new("3", "record"),
@@ -425,11 +422,12 @@ impl LiveApp {
             Shortcut::new("h", "help"),
             Shortcut::new("q", "quit"),
         ]);
-        [line1, line2, line3.to_string()]
-            .into_iter()
-            .map(|line| pad_ansi_line(&line, term_cols as usize))
-            .collect::<Vec<_>>()
-            .join("\n")
+        [
+            center_ansi_line(&status, term_cols as usize),
+            center_ansi_line(&shortcuts, term_cols as usize),
+            pad_ansi_line("", term_cols as usize),
+        ]
+        .join("\n")
     }
 
     fn help_overlay(&self, term_cols: u16) -> String {

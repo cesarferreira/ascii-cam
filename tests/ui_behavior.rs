@@ -1,4 +1,6 @@
-use ascii_cam::ui::{Shortcut, center_block, pad_ansi_line, shortcut_bar, visible_width};
+use ascii_cam::ui::{
+    Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar, visible_width,
+};
 
 #[test]
 fn shortcut_bar_renders_colored_keycaps_with_plain_labels() {
@@ -21,6 +23,14 @@ fn ansi_padding_counts_visible_cells_instead_of_escape_bytes() {
 
     assert_eq!(visible_width(&padded), 20);
     assert!(padded.ends_with("\u{1b}[K"));
+}
+
+#[test]
+fn center_ansi_line_centers_visible_text_and_pads_to_width() {
+    let centered = center_ansi_line("abc", 7);
+
+    assert_eq!(centered, "  abc  \u{1b}[K");
+    assert_eq!(visible_width(&centered), 7);
 }
 
 #[test]
