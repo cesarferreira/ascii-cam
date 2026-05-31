@@ -157,6 +157,7 @@ struct LiveApp {
     rotation: u8,
     recording_options: RecordingOptions,
     encoder: Option<RecordingEncoder>,
+    recording_dimensions: Option<(usize, usize)>,
     record_path: Option<PathBuf>,
     show_help: bool,
     show_settings: bool,
@@ -183,6 +184,7 @@ impl LiveApp {
             preset: Preset::Raw,
             recording_options: RecordingOptions::default(),
             encoder: None,
+            recording_dimensions: None,
             show_help: false,
             show_settings: false,
             last_rendered: None,
@@ -234,8 +236,19 @@ impl LiveApp {
             };
             let rendered = render_frame(&frame, &config);
 
-            if let Some(encoder) = &mut self.encoder {
-                encoder.write_frame_at(started.elapsed().as_millis() as u64, &rendered)?;
+            if self.encoder.is_some() {
+                match recording_frame_action(
+                    self.recording_dimensions,
+                    (rendered.width, rendered.height),
+                ) {
+                    RecordingFrameAction::Write => {
+                        if let Some(encoder) = &mut self.encoder {
+                            encoder
+                                .write_frame_at(started.elapsed().as_millis() as u64, &rendered)?;
+                        }
+                    }
+                    RecordingFrameAction::Stop => self.stop_recording()?,
+                }
             }
 
             frame_counter += 1;
@@ -319,9 +332,8 @@ impl LiveApp {
     }
 
     fn toggle_recording(&mut self) -> Result<()> {
-        if let Some(encoder) = self.encoder.take() {
-            encoder.finish()?;
-            return Ok(());
+        if self.encoder.is_some() {
+            return self.stop_recording();
         }
         let Some(frame) = &self.last_rendered else {
             return Ok(());
@@ -337,7 +349,16 @@ impl LiveApp {
             self.cli.fps,
             self.recording_options,
         )?);
+        self.recording_dimensions = Some((frame.width, frame.height));
         self.record_path = Some(path);
+        Ok(())
+    }
+
+    fn stop_recording(&mut self) -> Result<()> {
+        if let Some(encoder) = self.encoder.take() {
+            encoder.finish()?;
+        }
+        self.recording_dimensions = None;
         Ok(())
     }
 
@@ -604,4 +625,41 @@ fn timestamp() -> u64 {
 
 fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordingFrameAction {
+    Write,
+    Stop,
+}
+
+fn recording_frame_action(
+    recording_dimensions: Option<(usize, usize)>,
+    frame_dimensions: (usize, usize),
+) -> RecordingFrameAction {
+    match recording_dimensions {
+        Some(dimensions) if dimensions != frame_dimensions => RecordingFrameAction::Stop,
+        _ => RecordingFrameAction::Write,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecordingFrameAction, recording_frame_action};
+
+    #[test]
+    fn recording_stops_instead_of_exiting_when_frame_dimensions_change() {
+        assert_eq!(
+            recording_frame_action(Some((80, 24)), (24, 80)),
+            RecordingFrameAction::Stop
+        );
+    }
+
+    #[test]
+    fn recording_continues_when_frame_dimensions_match() {
+        assert_eq!(
+            recording_frame_action(Some((80, 24)), (80, 24)),
+            RecordingFrameAction::Write
+        );
+    }
 }
