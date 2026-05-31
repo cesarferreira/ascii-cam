@@ -23,9 +23,7 @@ use crate::render::{
     TOP_BAR_LINES, compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
-use crate::ui::{
-    Shortcut, center_ansi_line, pad_ansi_line, shortcut_bar, top_align_block, trim_blank_text_rows,
-};
+use crate::ui::{Shortcut, center_ansi_line, pad_ansi_line, shortcut_bar, top_align_block};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
@@ -161,8 +159,6 @@ struct LiveApp {
     show_help: bool,
     show_settings: bool,
     last_rendered: Option<RenderedFrame>,
-    last_term_size: Option<(u16, u16)>,
-    last_video_rows: usize,
 }
 
 impl LiveApp {
@@ -188,8 +184,6 @@ impl LiveApp {
             show_help: false,
             show_settings: false,
             last_rendered: None,
-            last_term_size: None,
-            last_video_rows: 0,
         })
     }
 
@@ -251,7 +245,7 @@ impl LiveApp {
                 fps_window = Instant::now();
             }
 
-            self.draw(&mut out, &rendered, term_cols, term_rows, fps_actual)?;
+            self.draw(&mut out, &rendered, term_cols, image_rows, fps_actual)?;
             self.last_rendered = Some(rendered);
         }
     }
@@ -365,11 +359,11 @@ impl LiveApp {
     }
 
     fn draw(
-        &mut self,
+        &self,
         out: &mut std::io::Stdout,
         rendered: &RenderedFrame,
         term_cols: u16,
-        term_rows: u16,
+        image_rows: u16,
         fps_actual: f32,
     ) -> Result<()> {
         if self.show_help {
@@ -387,31 +381,20 @@ impl LiveApp {
                 Print(self.settings_overlay(term_cols))
             )?;
         } else {
-            let term_size = (term_cols, term_rows);
-            if self.last_term_size != Some(term_size) {
-                execute!(out, MoveTo(0, 0), Clear(ClearType::All))?;
-                self.last_term_size = Some(term_size);
-                self.last_video_rows = 0;
-            }
-            let (visible_video, video_rows) = trimmed_video_text(rendered);
-            let video = top_align_block(&visible_video, term_cols as usize, video_rows);
-            let shortcuts_row = (TOP_BAR_LINES as usize + video_rows)
-                .min(term_rows.saturating_sub(BOTTOM_BAR_LINES) as usize);
-            let mut frame = String::new();
-            frame.push_str("\x1b[?2026h");
-            frame.push_str(&move_to(0, 0));
-            frame.push_str(&self.status_bar(term_cols, fps_actual));
-            frame.push_str(&move_to(0, TOP_BAR_LINES));
-            frame.push_str(&video);
-            for row in video_rows..self.last_video_rows {
-                frame.push_str(&move_to(0, TOP_BAR_LINES + row as u16));
-                frame.push_str(&pad_ansi_line("", term_cols as usize));
-            }
-            frame.push_str(&move_to(0, shortcuts_row as u16));
-            frame.push_str(&self.shortcut_bar(term_cols));
-            frame.push_str("\x1b[?2026l");
-            out.write_all(frame.as_bytes())?;
-            self.last_video_rows = video_rows;
+            let video = top_align_block(
+                &rendered.terminal_text(),
+                term_cols as usize,
+                image_rows as usize,
+            );
+            execute!(
+                out,
+                MoveTo(0, 0),
+                Print(self.status_bar(term_cols, fps_actual)),
+                MoveTo(0, TOP_BAR_LINES),
+                Print(video),
+                MoveTo(0, TOP_BAR_LINES + image_rows),
+                Print(self.shortcut_bar(term_cols))
+            )?;
         }
         out.flush()?;
         Ok(())
@@ -596,28 +579,4 @@ fn timestamp() -> u64 {
 
 fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
-}
-
-fn move_to(col: u16, row: u16) -> String {
-    format!("\x1b[{};{}H", row + 1, col + 1)
-}
-
-fn trimmed_video_text(rendered: &RenderedFrame) -> (String, usize) {
-    let terminal_lines: Vec<String> = rendered
-        .terminal_text()
-        .lines()
-        .map(str::to_string)
-        .collect();
-    let (plain_lines, rows) = trim_blank_text_rows(&rendered.lines);
-    let first_plain = rendered
-        .lines
-        .iter()
-        .position(|line| !line.trim().is_empty())
-        .unwrap_or(0);
-    let terminal_lines = terminal_lines
-        .into_iter()
-        .skip(first_plain)
-        .take(plain_lines.len())
-        .collect::<Vec<_>>();
-    (terminal_lines.join("\n"), rows)
 }

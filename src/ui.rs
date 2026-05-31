@@ -83,24 +83,6 @@ pub fn top_align_block(text: &str, width: usize, height: usize) -> String {
     out.join("\n")
 }
 
-pub fn trim_blank_text_rows(lines: &[String]) -> (Vec<String>, usize) {
-    if lines.is_empty() {
-        return (vec![String::new()], 1);
-    }
-
-    let first = lines.iter().position(|line| !line.trim().is_empty());
-    let Some(first) = first else {
-        return (vec![lines[0].clone()], 1);
-    };
-    let last = lines
-        .iter()
-        .rposition(|line| !line.trim().is_empty())
-        .unwrap_or(first);
-    let trimmed = lines[first..=last].to_vec();
-    let rows = trimmed.len();
-    (trimmed, rows)
-}
-
 pub fn center_ansi_line(line: &str, width: usize) -> String {
     let visible = visible_width(line);
     if visible >= width {
@@ -108,7 +90,16 @@ pub fn center_ansi_line(line: &str, width: usize) -> String {
     }
     let left = (width - visible) / 2;
     let right = width - visible - left;
-    format!("{}{}{}\x1b[K", " ".repeat(left), line, " ".repeat(right))
+    if line.contains('\x1b') {
+        format!(
+            "{}{}\x1b[0m{}\x1b[K",
+            " ".repeat(left),
+            line,
+            " ".repeat(right)
+        )
+    } else {
+        format!("{}{}{}\x1b[K", " ".repeat(left), line, " ".repeat(right))
+    }
 }
 
 pub fn visible_width(text: &str) -> usize {

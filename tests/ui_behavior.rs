@@ -1,6 +1,6 @@
 use ascii_cam::ui::{
     Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar, top_align_block,
-    trim_blank_text_rows, visible_width,
+    visible_width,
 };
 
 #[test]
@@ -32,6 +32,14 @@ fn center_ansi_line_centers_visible_text_and_pads_to_width() {
 
     assert_eq!(centered, "  abc  \u{1b}[K");
     assert_eq!(visible_width(&centered), 7);
+}
+
+#[test]
+fn center_ansi_line_resets_color_before_right_padding() {
+    let centered = center_ansi_line("\u{1b}[31mabc", 7);
+
+    assert_eq!(visible_width(&centered), 7);
+    assert!(centered.contains("\u{1b}[31mabc\u{1b}[0m  \u{1b}[K"));
 }
 
 #[test]
@@ -67,25 +75,4 @@ fn top_align_block_centers_lines_without_top_padding() {
     assert_eq!(lines[1], "  def  \u{1b}[K");
     assert_eq!(lines[2], "       \u{1b}[K");
     assert_eq!(lines[3], "       \u{1b}[K");
-}
-
-#[test]
-fn trim_blank_text_rows_removes_empty_top_and_bottom_rows() {
-    let (trimmed, rows) = trim_blank_text_rows(&[
-        "    ".to_string(),
-        "  ab".to_string(),
-        " cd ".to_string(),
-        "    ".to_string(),
-    ]);
-
-    assert_eq!(rows, 2);
-    assert_eq!(trimmed, vec!["  ab".to_string(), " cd ".to_string()]);
-}
-
-#[test]
-fn trim_blank_text_rows_keeps_one_row_when_everything_is_blank() {
-    let (trimmed, rows) = trim_blank_text_rows(&["   ".to_string(), "   ".to_string()]);
-
-    assert_eq!(rows, 1);
-    assert_eq!(trimmed, vec!["   ".to_string()]);
 }
