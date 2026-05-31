@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
 use crossterm::style::Print;
 use crossterm::terminal::{
@@ -504,7 +504,7 @@ fn spawn_key_reader() -> Receiver<KeyEvent> {
     thread::spawn(move || {
         loop {
             match event::read() {
-                Ok(Event::Key(key)) => {
+                Ok(Event::Key(key)) if should_forward_key_event(key) => {
                     if tx.send(key).is_err() {
                         break;
                     }
@@ -515,6 +515,10 @@ fn spawn_key_reader() -> Receiver<KeyEvent> {
         }
     });
     rx
+}
+
+fn should_forward_key_event(key: KeyEvent) -> bool {
+    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
 }
 
 fn pick_camera_interactive(platform: Platform) -> Result<u32> {
@@ -645,7 +649,9 @@ fn recording_frame_action(
 
 #[cfg(test)]
 mod tests {
-    use super::{RecordingFrameAction, recording_frame_action};
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    use super::{RecordingFrameAction, recording_frame_action, should_forward_key_event};
 
     #[test]
     fn recording_stops_instead_of_exiting_when_frame_dimensions_change() {
@@ -661,5 +667,16 @@ mod tests {
             recording_frame_action(Some((80, 24)), (80, 24)),
             RecordingFrameAction::Write
         );
+    }
+
+    #[test]
+    fn key_reader_ignores_release_events() {
+        let release = KeyEvent::new_with_kind(
+            KeyCode::Char('2'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        );
+
+        assert!(!should_forward_key_event(release));
     }
 }
