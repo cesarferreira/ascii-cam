@@ -19,8 +19,8 @@ use crate::capture::{
 use crate::color::ColorMode;
 use crate::recording::{RecordingDecoder, RecordingEncoder, RecordingOptions};
 use crate::render::{
-    CHAR_ASPECT_FALLBACK, HUD_LINES, RAMP_LONG, RAMP_SHORT, RenderConfig, RenderedFrame,
-    compute_render_size, render_frame,
+    BOTTOM_BAR_LINES, CHAR_ASPECT_FALLBACK, RAMP_LONG, RAMP_SHORT, RenderConfig, RenderedFrame,
+    TOP_BAR_LINES, compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
 use crate::ui::{Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar};
@@ -209,7 +209,9 @@ impl LiveApp {
 
             let frame = capture.read_frame()?.rotate(self.rotation);
             let (term_cols, term_rows) = size()?;
-            let image_rows = term_rows.saturating_sub(HUD_LINES).max(1);
+            let image_rows = term_rows
+                .saturating_sub(TOP_BAR_LINES + BOTTOM_BAR_LINES)
+                .max(1);
             let (cols, rows) = compute_render_size(
                 term_cols as usize,
                 image_rows as usize,
@@ -382,6 +384,11 @@ impl LiveApp {
             execute!(
                 out,
                 MoveTo(0, 0),
+                Print(self.status_bar(term_cols, fps_actual))
+            )?;
+            execute!(
+                out,
+                MoveTo(0, TOP_BAR_LINES),
                 Print(center_block(
                     &rendered.terminal_text(),
                     term_cols as usize,
@@ -391,18 +398,18 @@ impl LiveApp {
             )?;
             execute!(
                 out,
-                MoveTo(0, image_rows),
-                Print(self.hud(term_cols, fps_actual))
+                MoveTo(0, TOP_BAR_LINES + image_rows),
+                Print(self.shortcut_bar(term_cols))
             )?;
         }
         out.flush()?;
         Ok(())
     }
 
-    fn hud(&self, term_cols: u16, fps_actual: f32) -> String {
+    fn status_bar(&self, term_cols: u16, fps_actual: f32) -> String {
         let rec = if self.encoder.is_some() { " | REC" } else { "" };
         let status = format!(
-            "ASCII-CAM | {:>5.1} fps | {} | {} | contrast {:>3.1} | brightness {:+4} | rotation {} | invert {}{}",
+            "\x1b[1;38;2;156;224;236mASCII-CAM\x1b[0m  \x1b[38;2;191;197;255m{:>5.1} fps\x1b[0m  \x1b[38;2;255;237;181m{}\x1b[0m  \x1b[38;2;244;177;105m{}\x1b[0m  \x1b[38;2;176;232;190mcontrast {:>3.1}\x1b[0m  \x1b[38;2;202;170;246mbrightness {:+4}\x1b[0m  \x1b[38;2;255;184;208mrotation {}\x1b[0m  \x1b[38;2;191;222;255minvert {}\x1b[0m{}",
             fps_actual,
             self.color_mode.label(),
             self.preset.label(),
@@ -412,6 +419,10 @@ impl LiveApp {
             if self.invert { "on" } else { "off" },
             rec
         );
+        center_ansi_line(&status, term_cols as usize)
+    }
+
+    fn shortcut_bar(&self, term_cols: u16) -> String {
         let shortcuts = shortcut_bar(&[
             Shortcut::new("1", "invert"),
             Shortcut::new("2", "rotate"),
@@ -422,12 +433,7 @@ impl LiveApp {
             Shortcut::new("h", "help"),
             Shortcut::new("q", "quit"),
         ]);
-        [
-            center_ansi_line(&status, term_cols as usize),
-            center_ansi_line(&shortcuts, term_cols as usize),
-            pad_ansi_line("", term_cols as usize),
-        ]
-        .join("\n")
+        center_ansi_line(&shortcuts, term_cols as usize)
     }
 
     fn help_overlay(&self, term_cols: u16) -> String {

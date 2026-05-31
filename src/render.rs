@@ -6,7 +6,8 @@ use crate::frame::Frame;
 pub const RAMP_LONG: &str =
     " .'`^\",:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
 pub const RAMP_SHORT: &str = " .:-=+*#%@";
-pub const HUD_LINES: u16 = 3;
+pub const TOP_BAR_LINES: u16 = 1;
+pub const BOTTOM_BAR_LINES: u16 = 1;
 pub const CHAR_ASPECT_FALLBACK: f32 = 0.45;
 
 #[derive(Clone, Debug)]

@@ -1,10 +1,14 @@
 use ascii_cam::capture::{Platform, build_ffmpeg_args, parse_avfoundation_video_devices};
 
 #[test]
-fn macos_ffmpeg_args_let_camera_negotiate_input_pixel_format() {
+fn macos_ffmpeg_args_use_supported_avfoundation_input_format() {
     let args = build_ffmpeg_args(Platform::Macos, 0, 30, 640, 480);
 
     assert!(args.windows(2).any(|pair| pair == ["-f", "avfoundation"]));
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["-pixel_format", "nv12"])
+    );
     assert!(args.windows(2).any(|pair| pair == ["-pix_fmt", "rgb24"]));
     assert!(
         !args

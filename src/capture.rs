@@ -168,6 +168,8 @@ pub fn build_ffmpeg_args(
                     &fps.to_string(),
                     "-video_size",
                     &format!("{width}x{height}"),
+                    "-pixel_format",
+                    "nv12",
                     "-i",
                     &camera.to_string(),
                 ]
