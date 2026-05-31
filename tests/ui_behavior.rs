@@ -1,5 +1,6 @@
 use ascii_cam::ui::{
-    Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar, visible_width,
+    Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar, top_align_block,
+    visible_width,
 };
 
 #[test]
@@ -54,4 +55,16 @@ fn center_block_preserves_ansi_sequences_while_centering_visible_width() {
     assert_eq!(visible_width(&centered), 5);
     assert!(centered.starts_with("  \u{1b}[38;2;255;0;0m@"));
     assert!(centered.ends_with("  \u{1b}[K"));
+}
+
+#[test]
+fn top_align_block_centers_lines_without_top_padding() {
+    let aligned = top_align_block("abc\ndef", 7, 4);
+    let lines: Vec<&str> = aligned.lines().collect();
+
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[0], "  abc  \u{1b}[K");
+    assert_eq!(lines[1], "  def  \u{1b}[K");
+    assert_eq!(lines[2], "       \u{1b}[K");
+    assert_eq!(lines[3], "       \u{1b}[K");
 }

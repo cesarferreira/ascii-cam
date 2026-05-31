@@ -23,7 +23,7 @@ use crate::render::{
     TOP_BAR_LINES, compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
-use crate::ui::{Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar};
+use crate::ui::{Shortcut, center_ansi_line, pad_ansi_line, shortcut_bar, top_align_block};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
@@ -389,12 +389,11 @@ impl LiveApp {
             execute!(
                 out,
                 MoveTo(0, TOP_BAR_LINES),
-                Print(center_block(
+                Print(top_align_block(
                     &rendered.terminal_text(),
                     term_cols as usize,
                     image_rows as usize
-                )),
-                Clear(ClearType::FromCursorDown)
+                ))
             )?;
             execute!(
                 out,

@@ -68,6 +68,21 @@ pub fn center_block(text: &str, width: usize, height: usize) -> String {
     out.join("\n")
 }
 
+pub fn top_align_block(text: &str, width: usize, height: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let content_height = lines.len().min(height);
+    let mut out = Vec::with_capacity(height);
+
+    for line in lines.iter().take(content_height) {
+        out.push(center_ansi_line(line, width));
+    }
+    for _ in content_height..height {
+        out.push(pad_ansi_line("", width));
+    }
+
+    out.join("\n")
+}
+
 pub fn center_ansi_line(line: &str, width: usize) -> String {
     let visible = visible_width(line);
     if visible >= width {
