@@ -304,7 +304,7 @@ fn guess_outbound_ip() -> Option<String> {
     Some(ip.to_string())
 }
 
-fn viewer_html(token_query: &str) -> String {
+pub fn viewer_html(token_query: &str) -> String {
     format!(
         r#"<!doctype html>
 <meta charset="utf-8">
@@ -317,6 +317,72 @@ fn viewer_html(token_query: &str) -> String {
 <script>
 const pre = document.getElementById('screen');
 const url = '/stream{token_query}';
+const HOME = '\x1b[H';
+
+const PALETTE_16 = [
+  [0, 0, 0], [205, 0, 0], [0, 205, 0], [205, 205, 0],
+  [0, 0, 238], [205, 0, 205], [0, 205, 205], [229, 229, 229],
+  [127, 127, 127], [255, 0, 0], [0, 255, 0], [255, 255, 0],
+  [92, 92, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255]
+];
+
+function xterm256(n) {{
+  if (n < 16) return PALETTE_16[n];
+  if (n >= 232) {{ const v = 8 + (n - 232) * 10; return [v, v, v]; }}
+  n -= 16;
+  const conv = (c) => (c === 0 ? 0 : 55 + c * 40);
+  return [conv(Math.floor(n / 36)), conv(Math.floor((n % 36) / 6)), conv(n % 6)];
+}}
+
+function colorFromSgr(codeStr) {{
+  const parts = codeStr.split(';').map((p) => parseInt(p, 10) || 0);
+  const first = parts[0];
+  if (codeStr === '' || first === 0) return null;
+  if (first === 38 && parts[1] === 2) return [parts[2], parts[3], parts[4]];
+  if (first === 38 && parts[1] === 5) return xterm256(parts[2]);
+  if (first >= 30 && first <= 37) return PALETTE_16[first - 30];
+  if (first >= 90 && first <= 97) return PALETTE_16[first - 90 + 8];
+  return undefined;
+}}
+
+function sameColor(a, b) {{
+  if (a === null && b === null) return true;
+  if (a === null || b === null) return false;
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}}
+
+function renderFrame(frame) {{
+  frame = frame.replace(/\x1b\[2J/g, '');
+  const fragment = document.createDocumentFragment();
+  let cur = null;
+  let seg = '';
+  let last = 0;
+  const flush = () => {{
+    if (!seg) return;
+    if (cur) {{
+      const span = document.createElement('span');
+      span.style.color = 'rgb(' + cur[0] + ',' + cur[1] + ',' + cur[2] + ')';
+      span.textContent = seg;
+      fragment.appendChild(span);
+    }} else {{
+      fragment.appendChild(document.createTextNode(seg));
+    }}
+    seg = '';
+  }};
+  const re = /\x1b\[([0-9;]*)m/g;
+  for (const m of frame.matchAll(re)) {{
+    seg += frame.slice(last, m.index);
+    last = m.index + m[0].length;
+    const next = colorFromSgr(m[1]);
+    if (next === undefined || sameColor(next, cur)) continue;
+    flush();
+    cur = next;
+  }}
+  seg += frame.slice(last);
+  flush();
+  pre.replaceChildren(fragment);
+}}
+
 fetch(url).then(async (response) => {{
   if (!response.ok) throw new Error('stream failed: ' + response.status);
   const reader = response.body.getReader();
@@ -326,14 +392,11 @@ fetch(url).then(async (response) => {{
     const {{ value, done }} = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, {{ stream: true }});
-    const home = buffer.lastIndexOf('\x1b[H');
-    if (home >= 0) {{
-      let frame = buffer.slice(home + 3);
-      frame = frame.replace(/\x1b\[2J/g, '');
-      frame = frame.replace(/\x1b\[0m/g, '');
-      frame = frame.replace(/\x1b\[[0-9;]*m/g, '');
-      pre.textContent = frame;
-      buffer = buffer.slice(home);
+    const last = buffer.lastIndexOf(HOME);
+    const prev = last > 0 ? buffer.lastIndexOf(HOME, last - 1) : -1;
+    if (prev >= 0) {{
+      renderFrame(buffer.slice(prev + HOME.length, last));
+      buffer = buffer.slice(last);
     }}
   }}
 }}).catch((err) => {{ pre.textContent = String(err); }});

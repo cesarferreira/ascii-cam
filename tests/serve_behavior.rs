@@ -3,7 +3,7 @@ use ascii_cam::color::ColorMode;
 use ascii_cam::render::RenderedFrame;
 use ascii_cam::serve::{
     BroadcastOutcome, authorized, broadcast_outcome, effective_bind, frame_payload,
-    negotiate_color_mode, stream_query_suffix,
+    negotiate_color_mode, stream_query_suffix, viewer_html,
 };
 use tokio::sync::broadcast;
 
@@ -74,6 +74,20 @@ fn effective_bind_defaults_to_all_interfaces_unless_local_flag_is_set() {
 fn stream_query_suffix_formats_token_for_urls() {
     assert_eq!(stream_query_suffix(Some("mytoken")), "?token=mytoken");
     assert_eq!(stream_query_suffix(None), "");
+}
+
+#[test]
+fn viewer_html_renders_ansi_colors_instead_of_stripping_them() {
+    let html = viewer_html("?token=mytoken");
+
+    // The viewer wires the stream URL with the configured token.
+    assert!(html.contains("/stream?token=mytoken"));
+    // It must translate SGR color codes into colored DOM nodes, not drop them.
+    assert!(html.contains("colorFromSgr"));
+    assert!(html.contains("span.style.color"));
+    assert!(html.contains("xterm256"));
+    // The old behavior blanket-stripped every color escape; guard against regressing to it.
+    assert!(!html.contains(r"frame.replace(/\x1b\[[0-9;]*m/g, '')"));
 }
 
 #[test]
