@@ -33,8 +33,8 @@ use crate::ui::{Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcu
 pub struct Cli {
     #[arg(long, value_enum, default_value_t = Resolution::Medium)]
     pub resolution: Resolution,
-    #[arg(long, default_value_t = 0)]
-    pub camera: u32,
+    #[arg(long)]
+    pub camera: Option<u32>,
     #[arg(long, help = "Open an interactive camera picker before starting")]
     pub pick_camera: bool,
     #[arg(long, value_enum, default_value_t = Platform::Auto)]
@@ -96,8 +96,9 @@ pub fn run(cli: Cli) -> Result<()> {
     }
     let mut app = LiveApp::new(cli)?;
     if app.cli.pick_camera {
-        app.cli.camera = pick_camera_interactive(app.platform)?;
+        app.camera_index = pick_camera_interactive(app.platform, app.camera_index)?;
     }
+    save_last_camera(app.camera_index);
     app.run()
 }
 
@@ -150,6 +151,7 @@ impl Preset {
 struct LiveApp {
     cli: Cli,
     platform: Platform,
+    camera_index: u32,
     color_mode: ColorMode,
     preset: Preset,
     contrast: f32,
@@ -162,6 +164,7 @@ struct LiveApp {
     record_path: Option<PathBuf>,
     show_help: bool,
     show_settings: bool,
+    open_picker: bool,
     last_rendered: Option<RenderedFrame>,
 }
 
@@ -173,6 +176,9 @@ impl LiveApp {
         } else {
             cli.color
         };
+        let camera_index = cli
+            .camera
+            .unwrap_or_else(|| load_last_camera().unwrap_or(0));
         Ok(Self {
             contrast: cli.contrast,
             brightness: cli.brightness,
@@ -181,6 +187,7 @@ impl LiveApp {
             record_path: cli.record.clone(),
             cli,
             platform,
+            camera_index,
             color_mode,
             preset: Preset::Raw,
             recording_options: RecordingOptions::default(),
@@ -188,6 +195,7 @@ impl LiveApp {
             recording_dimensions: None,
             show_help: false,
             show_settings: false,
+            open_picker: false,
             last_rendered: None,
         })
     }
@@ -195,9 +203,9 @@ impl LiveApp {
     fn run(mut self) -> Result<()> {
         let (cam_w, cam_h) = self.cli.resolution.dimensions();
         let (cam_w, cam_h) =
-            resolve_capture_dimensions(self.platform, self.cli.camera, cam_w, cam_h);
+            resolve_capture_dimensions(self.platform, self.camera_index, cam_w, cam_h);
         let mut capture =
-            FfmpegCapture::spawn(self.platform, self.cli.camera, self.cli.fps, cam_w, cam_h)?;
+            FfmpegCapture::spawn(self.platform, self.camera_index, self.cli.fps, cam_w, cam_h)?;
         let _terminal = TerminalGuard::enter()?;
         let key_events = spawn_key_reader();
         let mut out = stdout();
@@ -211,6 +219,26 @@ impl LiveApp {
                 if self.handle_key(key)? {
                     return Ok(());
                 }
+                if self.open_picker {
+                    break;
+                }
+            }
+
+            if std::mem::take(&mut self.open_picker) {
+                if let Some(new_index) =
+                    pick_camera_in_session(self.platform, &key_events, self.camera_index, &mut out)?
+                    && new_index != self.camera_index
+                {
+                    let (w, h) = self.cli.resolution.dimensions();
+                    let (w, h) = resolve_capture_dimensions(self.platform, new_index, w, h);
+                    let new_capture =
+                        FfmpegCapture::spawn(self.platform, new_index, self.cli.fps, w, h)?;
+                    capture = new_capture;
+                    self.camera_index = new_index;
+                    save_last_camera(new_index);
+                    self.last_rendered = None;
+                }
+                continue;
             }
 
             let frame = capture.read_frame()?.rotate(self.rotation);
@@ -288,6 +316,7 @@ impl LiveApp {
             KeyCode::Char('3') => self.toggle_recording()?,
             KeyCode::Char('4') => self.capture_screenshots()?,
             KeyCode::Char('5') => self.apply_preset(self.preset.next()),
+            KeyCode::Char('c') => self.open_picker = true,
             KeyCode::Up => self.contrast = (self.contrast + 0.1).min(3.0),
             KeyCode::Down => self.contrast = (self.contrast - 0.1).max(0.1),
             KeyCode::Right => self.brightness = (self.brightness + 5).min(100),
@@ -454,6 +483,7 @@ impl LiveApp {
             Shortcut::new("3", "record"),
             Shortcut::new("4", "capture"),
             Shortcut::new("5", "preset"),
+            Shortcut::new("c", "camera"),
             Shortcut::new("s", "settings"),
             Shortcut::new("h", "help"),
             Shortcut::new("q", "quit"),
@@ -470,6 +500,7 @@ impl LiveApp {
             "3 start or stop .ascicam recording",
             "4 save HTML screenshot and .ascicam snapshot",
             "5 cycle preset",
+            "c switch camera",
             "arrow keys adjust contrast and brightness",
             "s settings",
             "h close help",
@@ -524,50 +555,183 @@ fn should_forward_key_event(key: KeyEvent) -> bool {
     matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
 }
 
-fn pick_camera_interactive(platform: Platform) -> Result<u32> {
+fn pick_camera_interactive(platform: Platform, current: u32) -> Result<u32> {
     let devices = discover_cameras(platform)?;
     if devices.is_empty() {
         bail!("no cameras discovered; pass --camera N to choose a camera index manually");
     }
-
     let _terminal = TerminalGuard::enter()?;
     let mut out = stdout();
-    let mut selected = 0_usize;
-    loop {
-        let (cols, _) = size()?;
-        execute!(
-            out,
-            MoveTo(0, 0),
-            Clear(ClearType::All),
-            Print(camera_picker_view(&devices, selected, cols as usize))
-        )?;
-        out.flush()?;
-
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Up => selected = selected.saturating_sub(1),
-                KeyCode::Down => selected = (selected + 1).min(devices.len() - 1),
-                KeyCode::Enter => return Ok(devices[selected].index),
-                KeyCode::Esc | KeyCode::Char('q') => bail!("camera picker cancelled"),
-                _ => {}
+    match camera_picker_loop(&devices, current, &mut out, || {
+        loop {
+            match event::read() {
+                Ok(Event::Key(key)) if should_forward_key_event(key) => return Ok(key),
+                Ok(_) => continue,
+                Err(err) => return Err(anyhow::Error::from(err)),
             }
+        }
+    })? {
+        PickerOutcome::Selected(index) => Ok(index),
+        PickerOutcome::Cancelled => bail!("camera picker cancelled"),
+    }
+}
+
+fn pick_camera_in_session(
+    platform: Platform,
+    key_events: &Receiver<KeyEvent>,
+    current: u32,
+    out: &mut std::io::Stdout,
+) -> Result<Option<u32>> {
+    let devices = discover_cameras(platform)?;
+    if devices.is_empty() {
+        return Ok(None);
+    }
+    let outcome = camera_picker_loop(&devices, current, out, || {
+        key_events
+            .recv()
+            .map_err(|err| anyhow::anyhow!("key reader stopped: {err}"))
+    })?;
+    Ok(match outcome {
+        PickerOutcome::Selected(index) => Some(index),
+        PickerOutcome::Cancelled => None,
+    })
+}
+
+enum PickerOutcome {
+    Selected(u32),
+    Cancelled,
+}
+
+fn camera_picker_loop<F>(
+    devices: &[CameraDevice],
+    current: u32,
+    out: &mut std::io::Stdout,
+    mut next_key: F,
+) -> Result<PickerOutcome>
+where
+    F: FnMut() -> Result<KeyEvent>,
+{
+    let mut selected = devices
+        .iter()
+        .position(|device| device.index == current)
+        .unwrap_or(0);
+    loop {
+        let (cols, rows) = size()?;
+        render_camera_picker(devices, selected, out, cols as usize, rows as usize)?;
+        let key = next_key()?;
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => selected = (selected + 1).min(devices.len() - 1),
+            KeyCode::Home => selected = 0,
+            KeyCode::End => selected = devices.len() - 1,
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                return Ok(PickerOutcome::Selected(devices[selected].index));
+            }
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') => {
+                return Ok(PickerOutcome::Cancelled);
+            }
+            _ => {}
         }
     }
 }
 
-fn camera_picker_view(devices: &[CameraDevice], selected: usize, width: usize) -> String {
-    let mut lines = vec![
-        pad_ansi_line("ASCII-CAM CAMERA", width),
-        pad_ansi_line("", width),
-        pad_ansi_line("Use Up/Down, Enter to select, q to cancel", width),
-        pad_ansi_line("", width),
-    ];
-    for (index, device) in devices.iter().enumerate() {
-        let marker = if index == selected { ">" } else { " " };
-        let line = format!("{marker} [{}] {}", device.index, device.name);
-        lines.push(pad_ansi_line(&line, width));
+fn render_camera_picker(
+    devices: &[CameraDevice],
+    selected: usize,
+    out: &mut std::io::Stdout,
+    term_cols: usize,
+    term_rows: usize,
+) -> Result<()> {
+    let lines = camera_picker_lines(devices, selected);
+    let top = term_rows.saturating_sub(lines.len()) / 2;
+    execute!(out, MoveTo(0, 0), Clear(ClearType::All))?;
+    for (i, line) in lines.iter().enumerate() {
+        let row = top + i;
+        if row >= term_rows {
+            break;
+        }
+        execute!(
+            out,
+            MoveTo(0, row as u16),
+            Print(center_ansi_line(line, term_cols)),
+        )?;
     }
-    lines.join("\n")
+    out.flush()?;
+    Ok(())
+}
+
+pub(crate) fn camera_picker_lines(devices: &[CameraDevice], selected: usize) -> Vec<String> {
+    use crate::ui::visible_width;
+    const KEYCAP_PALETTE: [(u8, u8, u8); 8] = [
+        (191, 197, 255),
+        (255, 237, 181),
+        (156, 224, 236),
+        (202, 170, 246),
+        (244, 177, 105),
+        (176, 232, 190),
+        (255, 184, 208),
+        (191, 222, 255),
+    ];
+    const KEY_TEXT: (u8, u8, u8) = (35, 31, 48);
+    const SELECTED_BG: (u8, u8, u8) = (60, 55, 85);
+    const TITLE_FG: (u8, u8, u8) = (156, 224, 236);
+    const SUBTITLE_FG: (u8, u8, u8) = (200, 200, 220);
+
+    let row_width = devices
+        .iter()
+        .map(|device| {
+            let chip = 4_usize;
+            let marker = 2_usize;
+            let leading = 1_usize;
+            let gap = 2_usize;
+            let trailing = 1_usize;
+            leading + marker + chip + gap + device.name.chars().count() + trailing
+        })
+        .max()
+        .unwrap_or(28)
+        .max(28);
+
+    let mut lines: Vec<String> = Vec::with_capacity(devices.len() + 6);
+    lines.push(format!(
+        "\x1b[1;38;2;{};{};{}mASCII-CAM\x1b[0m",
+        TITLE_FG.0, TITLE_FG.1, TITLE_FG.2,
+    ));
+    lines.push(String::new());
+    lines.push(format!(
+        "\x1b[38;2;{};{};{}mSelect a camera\x1b[0m",
+        SUBTITLE_FG.0, SUBTITLE_FG.1, SUBTITLE_FG.2,
+    ));
+    lines.push(String::new());
+
+    for (i, device) in devices.iter().enumerate() {
+        let (cr, cg, cb) = KEYCAP_PALETTE[i % KEYCAP_PALETTE.len()];
+        let chip = format!(
+            "\x1b[48;2;{cr};{cg};{cb}m\x1b[38;2;{};{};{}m {:>2} \x1b[0m",
+            KEY_TEXT.0, KEY_TEXT.1, KEY_TEXT.2, device.index,
+        );
+        let marker = if i == selected { "▶ " } else { "  " };
+        let row = format!(" {marker}{chip}  {} ", device.name);
+        let visible = visible_width(&row);
+        let pad = row_width.saturating_sub(visible);
+        let padded = format!("{row}{}", " ".repeat(pad));
+        if i == selected {
+            lines.push(format!(
+                "\x1b[48;2;{};{};{}m{padded}\x1b[0m",
+                SELECTED_BG.0, SELECTED_BG.1, SELECTED_BG.2,
+            ));
+        } else {
+            lines.push(padded);
+        }
+    }
+
+    lines.push(String::new());
+    lines.push(shortcut_bar(&[
+        Shortcut::new("\u{2191}\u{2193}", "move"),
+        Shortcut::new("\u{23ce}", "select"),
+        Shortcut::new("esc", "cancel"),
+    ]));
+
+    lines
 }
 
 fn play_recording(path: PathBuf) -> Result<()> {
@@ -655,6 +819,28 @@ fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
 }
 
+fn last_camera_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    Some(base.join("ascii-cam").join("last_camera"))
+}
+
+fn load_last_camera() -> Option<u32> {
+    let path = last_camera_path()?;
+    std::fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+fn save_last_camera(index: u32) {
+    let Some(path) = last_camera_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, format!("{index}\n"));
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecordingFrameAction {
     Write,
@@ -675,11 +861,13 @@ fn recording_frame_action(
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+    use crate::capture::CameraDevice;
     use crate::render::RenderedFrame;
     use crate::ui::visible_width;
 
     use super::{
-        RecordingFrameAction, playback_frame_view, recording_frame_action, should_forward_key_event,
+        RecordingFrameAction, camera_picker_lines, playback_frame_view, recording_frame_action,
+        should_forward_key_event,
     };
 
     #[test]
@@ -728,5 +916,60 @@ mod tests {
         assert_eq!(lines[0], "ab    \x1b[K");
         assert_eq!(lines[1], "      \x1b[K");
         assert_eq!(lines[2], "      \x1b[K");
+    }
+
+    #[test]
+    fn camera_picker_lists_all_devices_with_their_index_chips_and_names() {
+        let devices = vec![
+            CameraDevice {
+                index: 0,
+                name: "FaceTime HD Camera".to_string(),
+            },
+            CameraDevice {
+                index: 2,
+                name: "iPhone Camera".to_string(),
+            },
+        ];
+
+        let joined = camera_picker_lines(&devices, 0).join("\n");
+
+        assert!(joined.contains("ASCII-CAM"));
+        assert!(joined.contains("Select a camera"));
+        assert!(joined.contains("FaceTime HD Camera"));
+        assert!(joined.contains("iPhone Camera"));
+        // Index chips use the keycap palette (first chip uses palette[0] bg)
+        assert!(joined.contains("\u{1b}[48;2;191;197;255m"));
+        assert!(joined.contains(" 0 "));
+        assert!(joined.contains(" 2 "));
+    }
+
+    #[test]
+    fn camera_picker_highlights_only_the_selected_row() {
+        let devices = vec![
+            CameraDevice {
+                index: 0,
+                name: "Cam A".to_string(),
+            },
+            CameraDevice {
+                index: 1,
+                name: "Cam B".to_string(),
+            },
+            CameraDevice {
+                index: 2,
+                name: "Cam C".to_string(),
+            },
+        ];
+
+        let lines = camera_picker_lines(&devices, 1);
+        let selection_bg = "\u{1b}[48;2;60;55;85m";
+        let highlighted: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.contains(selection_bg))
+            .collect();
+
+        assert_eq!(highlighted.len(), 1);
+        assert!(highlighted[0].contains("Cam B"));
+        assert!(highlighted[0].contains("\u{25b6}"));
+        assert!(!highlighted[0].contains("Cam A"));
     }
 }
