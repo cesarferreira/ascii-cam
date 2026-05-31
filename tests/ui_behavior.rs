@@ -1,6 +1,6 @@
 use ascii_cam::ui::{
     Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar, top_align_block,
-    visible_width,
+    trim_blank_text_rows, visible_width,
 };
 
 #[test]
@@ -67,4 +67,25 @@ fn top_align_block_centers_lines_without_top_padding() {
     assert_eq!(lines[1], "  def  \u{1b}[K");
     assert_eq!(lines[2], "       \u{1b}[K");
     assert_eq!(lines[3], "       \u{1b}[K");
+}
+
+#[test]
+fn trim_blank_text_rows_removes_empty_top_and_bottom_rows() {
+    let (trimmed, rows) = trim_blank_text_rows(&[
+        "    ".to_string(),
+        "  ab".to_string(),
+        " cd ".to_string(),
+        "    ".to_string(),
+    ]);
+
+    assert_eq!(rows, 2);
+    assert_eq!(trimmed, vec!["  ab".to_string(), " cd ".to_string()]);
+}
+
+#[test]
+fn trim_blank_text_rows_keeps_one_row_when_everything_is_blank() {
+    let (trimmed, rows) = trim_blank_text_rows(&["   ".to_string(), "   ".to_string()]);
+
+    assert_eq!(rows, 1);
+    assert_eq!(trimmed, vec!["   ".to_string()]);
 }

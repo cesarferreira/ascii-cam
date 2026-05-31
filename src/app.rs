@@ -23,7 +23,9 @@ use crate::render::{
     TOP_BAR_LINES, compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
-use crate::ui::{Shortcut, center_ansi_line, pad_ansi_line, shortcut_bar, top_align_block};
+use crate::ui::{
+    Shortcut, center_ansi_line, pad_ansi_line, shortcut_bar, top_align_block, trim_blank_text_rows,
+};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
@@ -391,12 +393,9 @@ impl LiveApp {
                 self.last_term_size = Some(term_size);
                 self.last_video_rows = 0;
             }
-            let video = top_align_block(
-                &rendered.terminal_text(),
-                term_cols as usize,
-                rendered.height,
-            );
-            let shortcuts_row = (TOP_BAR_LINES as usize + rendered.height)
+            let (visible_video, video_rows) = trimmed_video_text(rendered);
+            let video = top_align_block(&visible_video, term_cols as usize, video_rows);
+            let shortcuts_row = (TOP_BAR_LINES as usize + video_rows)
                 .min(term_rows.saturating_sub(BOTTOM_BAR_LINES) as usize);
             let mut frame = String::new();
             frame.push_str("\x1b[?2026h");
@@ -404,7 +403,7 @@ impl LiveApp {
             frame.push_str(&self.status_bar(term_cols, fps_actual));
             frame.push_str(&move_to(0, TOP_BAR_LINES));
             frame.push_str(&video);
-            for row in rendered.height..self.last_video_rows {
+            for row in video_rows..self.last_video_rows {
                 frame.push_str(&move_to(0, TOP_BAR_LINES + row as u16));
                 frame.push_str(&pad_ansi_line("", term_cols as usize));
             }
@@ -412,7 +411,7 @@ impl LiveApp {
             frame.push_str(&self.shortcut_bar(term_cols));
             frame.push_str("\x1b[?2026l");
             out.write_all(frame.as_bytes())?;
-            self.last_video_rows = rendered.height;
+            self.last_video_rows = video_rows;
         }
         out.flush()?;
         Ok(())
@@ -601,4 +600,24 @@ fn on_off(value: bool) -> &'static str {
 
 fn move_to(col: u16, row: u16) -> String {
     format!("\x1b[{};{}H", row + 1, col + 1)
+}
+
+fn trimmed_video_text(rendered: &RenderedFrame) -> (String, usize) {
+    let terminal_lines: Vec<String> = rendered
+        .terminal_text()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let (plain_lines, rows) = trim_blank_text_rows(&rendered.lines);
+    let first_plain = rendered
+        .lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .unwrap_or(0);
+    let terminal_lines = terminal_lines
+        .into_iter()
+        .skip(first_plain)
+        .take(plain_lines.len())
+        .collect::<Vec<_>>();
+    (terminal_lines.join("\n"), rows)
 }
