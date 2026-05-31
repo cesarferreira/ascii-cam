@@ -577,11 +577,15 @@ fn play_recording(path: PathBuf) -> Result<()> {
         if delay > 0 {
             std::thread::sleep(Duration::from_millis(delay.min(1000)));
         }
+        let (term_cols, term_rows) = size()?;
         execute!(
             out,
             MoveTo(0, 0),
-            Clear(ClearType::All),
-            Print(decoded.frame.terminal_text())
+            Print(playback_frame_view(
+                &decoded.frame,
+                term_cols as usize,
+                term_rows as usize
+            ))
         )?;
         out.flush()?;
         last_timestamp = decoded.timestamp_ms;
@@ -601,6 +605,10 @@ fn play_recording(path: PathBuf) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn playback_frame_view(frame: &RenderedFrame, term_cols: usize, term_rows: usize) -> String {
+    center_block(&frame.terminal_text(), term_cols.max(1), term_rows.max(1))
 }
 
 struct TerminalGuard;
@@ -651,7 +659,12 @@ fn recording_frame_action(
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-    use super::{RecordingFrameAction, recording_frame_action, should_forward_key_event};
+    use crate::render::RenderedFrame;
+    use crate::ui::visible_width;
+
+    use super::{
+        RecordingFrameAction, playback_frame_view, recording_frame_action, should_forward_key_event,
+    };
 
     #[test]
     fn recording_stops_instead_of_exiting_when_frame_dimensions_change() {
@@ -678,5 +691,15 @@ mod tests {
         );
 
         assert!(!should_forward_key_event(release));
+    }
+
+    #[test]
+    fn playback_view_clips_recordings_to_current_terminal_size() {
+        let frame = RenderedFrame::new(5, 1, vec!["abcde".to_string()], None).unwrap();
+        let view = playback_frame_view(&frame, 3, 1);
+
+        assert_eq!(view, "abc\x1b[0m\x1b[K");
+        assert_eq!(view.lines().count(), 1);
+        assert_eq!(visible_width(&view), 3);
     }
 }
