@@ -48,6 +48,36 @@ pub fn pad_ansi_line(line: &str, width: usize) -> String {
     out
 }
 
+pub fn center_block(text: &str, width: usize, height: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let content_height = lines.len().min(height);
+    let top_padding = height.saturating_sub(content_height) / 2;
+    let bottom_padding = height.saturating_sub(content_height) - top_padding;
+    let mut out = Vec::with_capacity(height);
+
+    for _ in 0..top_padding {
+        out.push(pad_ansi_line("", width));
+    }
+    for line in lines.iter().take(content_height) {
+        out.push(center_ansi_line(line, width));
+    }
+    for _ in 0..bottom_padding {
+        out.push(pad_ansi_line("", width));
+    }
+
+    out.join("\n")
+}
+
+fn center_ansi_line(line: &str, width: usize) -> String {
+    let visible = visible_width(line);
+    if visible >= width {
+        return pad_ansi_line(line, width);
+    }
+    let left = (width - visible) / 2;
+    let right = width - visible - left;
+    format!("{}{}{}\x1b[K", " ".repeat(left), line, " ".repeat(right))
+}
+
 pub fn visible_width(text: &str) -> usize {
     let mut width = 0;
     let mut chars = text.chars().peekable();

@@ -23,7 +23,7 @@ use crate::render::{
     compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
-use crate::ui::{Shortcut, pad_ansi_line, shortcut_bar};
+use crate::ui::{Shortcut, center_block, pad_ansi_line, shortcut_bar};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
@@ -382,7 +382,11 @@ impl LiveApp {
             execute!(
                 out,
                 MoveTo(0, 0),
-                Print(clear_line_endings(rendered.terminal_text())),
+                Print(center_block(
+                    &rendered.terminal_text(),
+                    term_cols as usize,
+                    image_rows as usize
+                )),
                 Clear(ClearType::FromCursorDown)
             )?;
             execute!(
@@ -577,16 +581,4 @@ fn timestamp() -> u64 {
 
 fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
-}
-
-fn clear_line_endings(text: String) -> String {
-    let mut out = String::with_capacity(text.len() + 8);
-    for (index, line) in text.split('\n').enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
-        out.push_str(line);
-        out.push_str("\x1b[K");
-    }
-    out
 }
