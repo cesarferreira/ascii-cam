@@ -608,7 +608,20 @@ fn play_recording(path: PathBuf) -> Result<()> {
 }
 
 fn playback_frame_view(frame: &RenderedFrame, term_cols: usize, term_rows: usize) -> String {
-    center_block(&frame.terminal_text(), term_cols.max(1), term_rows.max(1))
+    let width = term_cols.max(1);
+    let height = term_rows.max(1);
+    let mut lines = frame
+        .terminal_text()
+        .lines()
+        .take(height)
+        .map(|line| pad_ansi_line(line, width))
+        .collect::<Vec<_>>();
+
+    while lines.len() < height {
+        lines.push(pad_ansi_line("", width));
+    }
+
+    lines.join("\n")
 }
 
 struct TerminalGuard;
@@ -701,5 +714,16 @@ mod tests {
         assert_eq!(view, "abc\x1b[0m\x1b[K");
         assert_eq!(view.lines().count(), 1);
         assert_eq!(visible_width(&view), 3);
+    }
+
+    #[test]
+    fn playback_view_does_not_center_or_add_top_spacing() {
+        let frame = RenderedFrame::new(2, 1, vec!["ab".to_string()], None).unwrap();
+        let view = playback_frame_view(&frame, 6, 3);
+        let lines: Vec<&str> = view.lines().collect();
+
+        assert_eq!(lines[0], "ab    \x1b[K");
+        assert_eq!(lines[1], "      \x1b[K");
+        assert_eq!(lines[2], "      \x1b[K");
     }
 }
