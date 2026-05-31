@@ -72,6 +72,7 @@ impl FfmpegCapture {
 
         let mut child = Command::new("ffmpeg")
             .args(&args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -154,7 +155,7 @@ pub fn build_ffmpeg_args(
     height: usize,
 ) -> Vec<String> {
     let platform = platform.detect();
-    let mut args: Vec<String> = vec!["-hide_banner", "-loglevel", "error"]
+    let mut args: Vec<String> = vec!["-hide_banner", "-nostdin", "-loglevel", "error"]
         .into_iter()
         .map(str::to_string)
         .collect();
