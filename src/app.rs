@@ -22,8 +22,8 @@ use crate::capture::{
 use crate::color::ColorMode;
 use crate::recording::{RecordingDecoder, RecordingEncoder, RecordingOptions};
 use crate::render::{
-    BOTTOM_BAR_LINES, CHAR_ASPECT_FALLBACK, RAMP_LONG, RAMP_SHORT, RenderConfig, RenderedFrame,
-    TOP_BAR_LINES, compute_render_size, render_frame,
+    BOTTOM_BAR_LINES, CHAR_ASPECT_FALLBACK, RAMP_LONG, RAMP_SHORT, RenderConfig, RenderMode,
+    RenderedFrame, TOP_BAR_LINES, compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
 use crate::ui::{Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar};
@@ -55,6 +55,8 @@ pub struct Cli {
     pub color: ColorMode,
     #[arg(long)]
     pub no_color: bool,
+    #[arg(long, value_enum, default_value_t = RenderMode::Ascii)]
+    pub mode: RenderMode,
     #[arg(long)]
     pub record: Option<PathBuf>,
     #[arg(long)]
@@ -158,6 +160,7 @@ struct LiveApp {
     brightness: i16,
     invert: bool,
     rotation: u8,
+    render_mode: RenderMode,
     recording_options: RecordingOptions,
     encoder: Option<RecordingEncoder>,
     recording_dimensions: Option<(usize, usize)>,
@@ -184,6 +187,7 @@ impl LiveApp {
             brightness: cli.brightness,
             invert: cli.invert,
             rotation: cli.rotate % 4,
+            render_mode: cli.mode,
             record_path: cli.record.clone(),
             cli,
             platform,
@@ -264,6 +268,7 @@ impl LiveApp {
                 contrast: self.contrast,
                 brightness: self.brightness,
                 invert: self.invert,
+                mode: self.render_mode,
             };
             let rendered = render_frame(&frame, &config);
 
@@ -316,6 +321,7 @@ impl LiveApp {
             KeyCode::Char('3') => self.toggle_recording()?,
             KeyCode::Char('4') => self.capture_screenshots()?,
             KeyCode::Char('5') => self.apply_preset(self.preset.next()),
+            KeyCode::Char('b') => self.cycle_render_mode()?,
             KeyCode::Char('c') => self.open_picker = true,
             KeyCode::Up => self.contrast = (self.contrast + 0.1).min(3.0),
             KeyCode::Down => self.contrast = (self.contrast - 0.1).max(0.1),
@@ -363,9 +369,21 @@ impl LiveApp {
         }
     }
 
+    fn cycle_render_mode(&mut self) -> Result<()> {
+        self.render_mode = self.render_mode.next();
+        if matches!(self.render_mode, RenderMode::Braille) && self.encoder.is_some() {
+            self.stop_recording()?;
+        }
+        self.last_rendered = None;
+        Ok(())
+    }
+
     fn toggle_recording(&mut self) -> Result<()> {
         if self.encoder.is_some() {
             return self.stop_recording();
+        }
+        if matches!(self.render_mode, RenderMode::Braille) {
+            return Ok(());
         }
         let Some(frame) = &self.last_rendered else {
             return Ok(());
@@ -400,6 +418,11 @@ impl LiveApp {
         };
         let stamp = timestamp();
         write_html(format!("screenshot-{stamp}.html"), frame)?;
+        // .ascicam recordings encode 1 byte per cell — braille glyphs are
+        // multibyte and can't round-trip through the v1 wire format yet.
+        if matches!(self.render_mode, RenderMode::Braille) {
+            return Ok(());
+        }
         let mut encoder = RecordingEncoder::create(
             format!("snapshot-{stamp}.ascicam"),
             frame.width,
@@ -463,9 +486,10 @@ impl LiveApp {
     fn status_bar(&self, term_cols: u16, fps_actual: f32) -> String {
         let rec = if self.encoder.is_some() { " | REC" } else { "" };
         let status = format!(
-            "\x1b[1;38;2;156;224;236mASCII-CAM\x1b[0m  \x1b[38;2;191;197;255m{:>5.1} fps\x1b[0m  \x1b[38;2;255;237;181m{}\x1b[0m  \x1b[38;2;244;177;105m{}\x1b[0m  \x1b[38;2;176;232;190mcontrast {:>3.1}\x1b[0m  \x1b[38;2;202;170;246mbrightness {:+4}\x1b[0m  \x1b[38;2;255;184;208mrotation {}\x1b[0m  \x1b[38;2;191;222;255minvert {}\x1b[0m{}",
+            "\x1b[1;38;2;156;224;236mASCII-CAM\x1b[0m  \x1b[38;2;191;197;255m{:>5.1} fps\x1b[0m  \x1b[38;2;255;237;181m{}\x1b[0m  \x1b[38;2;156;224;236mmode {}\x1b[0m  \x1b[38;2;244;177;105m{}\x1b[0m  \x1b[38;2;176;232;190mcontrast {:>3.1}\x1b[0m  \x1b[38;2;202;170;246mbrightness {:+4}\x1b[0m  \x1b[38;2;255;184;208mrotation {}\x1b[0m  \x1b[38;2;191;222;255minvert {}\x1b[0m{}",
             fps_actual,
             self.color_mode.label(),
+            self.render_mode.label(),
             self.preset.label(),
             self.contrast,
             self.brightness,
@@ -483,6 +507,7 @@ impl LiveApp {
             Shortcut::new("3", "record"),
             Shortcut::new("4", "capture"),
             Shortcut::new("5", "preset"),
+            Shortcut::new("b", "mode"),
             Shortcut::new("c", "camera"),
             Shortcut::new("s", "settings"),
             Shortcut::new("h", "help"),
@@ -497,9 +522,10 @@ impl LiveApp {
             "",
             "1 toggle invert",
             "2 rotate 0/90/180/270",
-            "3 start or stop .ascicam recording",
-            "4 save HTML screenshot and .ascicam snapshot",
+            "3 start or stop .ascicam recording (ASCII mode only)",
+            "4 save HTML screenshot (.ascicam snapshot in ASCII mode only)",
             "5 cycle preset",
+            "b cycle render mode (ASCII / Braille)",
             "c switch camera",
             "arrow keys adjust contrast and brightness",
             "s settings",

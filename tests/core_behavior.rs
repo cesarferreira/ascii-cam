@@ -2,7 +2,7 @@ use ascii_cam::color::{ColorMode, Rgb};
 use ascii_cam::frame::Frame;
 use ascii_cam::recording::{RecordingDecoder, RecordingEncoder, RecordingOptions};
 use ascii_cam::render::{
-    RenderConfig, RenderedFrame, build_lut, compute_render_size, render_frame,
+    RenderConfig, RenderMode, RenderedFrame, build_lut, compute_render_size, render_frame,
 };
 
 #[test]
@@ -86,6 +86,7 @@ fn render_frame_applies_brightness_contrast_invert_and_color_mode() {
         contrast: 1.0,
         brightness: 0,
         invert: true,
+        mode: RenderMode::Ascii,
     };
 
     let rendered = render_frame(&frame, &config);
@@ -134,6 +135,76 @@ fn recording_round_trips_keyframes_deltas_and_skip_frames() {
     assert_eq!(decoded_third.timestamp_ms, 66);
     assert_eq!(decoded_third.frame, second);
     assert!(decoder.read_frame().unwrap().is_none());
+}
+
+#[test]
+fn braille_mode_renders_all_dark_pixels_as_blank_braille_cell() {
+    let frame = Frame::new(2, 4, vec![Rgb::new(0, 0, 0); 8]).unwrap();
+    let config = braille_config(1, 1, ColorMode::Off);
+
+    let rendered = render_frame(&frame, &config);
+
+    assert_eq!(rendered.plain_lines(), vec!["\u{2800}"]);
+    assert_eq!(rendered.width, 1);
+    assert_eq!(rendered.height, 1);
+}
+
+#[test]
+fn braille_mode_renders_all_light_pixels_as_full_braille_cell() {
+    let frame = Frame::new(2, 4, vec![Rgb::new(255, 255, 255); 8]).unwrap();
+    let config = braille_config(1, 1, ColorMode::Off);
+
+    let rendered = render_frame(&frame, &config);
+
+    assert_eq!(rendered.plain_lines(), vec!["\u{28FF}"]);
+}
+
+#[test]
+fn braille_mode_packs_eight_sub_pixels_into_standard_braille_bit_layout() {
+    // Sub-pixel grid (W = above threshold, B = below):
+    //   W B   -> dot 1 lit         (bit 0x01)
+    //   B W   -> dot 5 lit         (bit 0x10)
+    //   W B   -> dot 3 lit         (bit 0x04)
+    //   B B   -> nothing
+    // mask = 0x01 | 0x10 | 0x04 = 0x15  ->  U+2815  ⠕
+    let w = Rgb::new(255, 255, 255);
+    let b = Rgb::new(0, 0, 0);
+    let pixels = vec![
+        w, b, // row 0
+        b, w, // row 1
+        w, b, // row 2
+        b, b, // row 3
+    ];
+    let frame = Frame::new(2, 4, pixels).unwrap();
+    let config = braille_config(1, 1, ColorMode::Off);
+
+    let rendered = render_frame(&frame, &config);
+
+    assert_eq!(rendered.plain_lines(), vec!["\u{2815}"]);
+}
+
+#[test]
+fn braille_mode_applies_color_mode_per_terminal_cell() {
+    let frame = Frame::new(2, 4, vec![Rgb::new(255, 255, 255); 8]).unwrap();
+    let config = braille_config(1, 1, ColorMode::TrueColor);
+
+    let rendered = render_frame(&frame, &config);
+
+    assert!(rendered.terminal_text().contains("\u{1b}[38;2;"));
+    assert!(rendered.terminal_text().contains("\u{28FF}"));
+}
+
+fn braille_config(cols: usize, rows: usize, color_mode: ColorMode) -> RenderConfig {
+    RenderConfig {
+        cols,
+        rows,
+        ramp: " .:-=+*#%@".to_string(),
+        color_mode,
+        contrast: 1.0,
+        brightness: 0,
+        invert: false,
+        mode: RenderMode::Braille,
+    }
 }
 
 fn reds(frame: &Frame) -> Vec<u8> {

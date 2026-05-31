@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use clap::ValueEnum;
 
 use crate::color::{ColorMode, Rgb};
 use crate::frame::Frame;
@@ -10,6 +11,28 @@ pub const TOP_BAR_LINES: u16 = 1;
 pub const BOTTOM_BAR_LINES: u16 = 1;
 pub const CHAR_ASPECT_FALLBACK: f32 = 0.45;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum RenderMode {
+    Ascii,
+    Braille,
+}
+
+impl RenderMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ascii => "ASCII",
+            Self::Braille => "Braille",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Ascii => Self::Braille,
+            Self::Braille => Self::Ascii,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RenderConfig {
     pub cols: usize,
@@ -19,6 +42,7 @@ pub struct RenderConfig {
     pub contrast: f32,
     pub brightness: i16,
     pub invert: bool,
+    pub mode: RenderMode,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +158,13 @@ pub fn build_lut(ramp: &str) -> Vec<char> {
 }
 
 pub fn render_frame(frame: &Frame, config: &RenderConfig) -> RenderedFrame {
+    match config.mode {
+        RenderMode::Ascii => render_ascii(frame, config),
+        RenderMode::Braille => render_braille(frame, config),
+    }
+}
+
+fn render_ascii(frame: &Frame, config: &RenderConfig) -> RenderedFrame {
     let ramp: Vec<char> = config.ramp.chars().collect();
     let max_index = ramp.len().saturating_sub(1);
     let rows = config.rows.max(1);
@@ -179,6 +210,84 @@ pub fn render_frame(frame: &Frame, config: &RenderConfig) -> RenderedFrame {
         plain_lines.push(line);
         if let Some(rows) = &mut color_rows {
             rows.push(color_row);
+        }
+    }
+    if config.color_mode != ColorMode::Off {
+        terminal.push_str("\x1b[0m");
+    }
+
+    RenderedFrame::new(cols, rows, plain_lines, color_rows)
+        .expect("renderer produced internally consistent frame")
+        .with_terminal_text(terminal)
+}
+
+// Bit values per (sub_y, sub_x) in the 2×4 braille dot grid, matching the
+// Unicode Block "Braille Patterns" (U+2800..U+28FF) encoding.
+const BRAILLE_DOT_BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+
+const BRAILLE_THRESHOLD: u8 = 128;
+
+fn render_braille(frame: &Frame, config: &RenderConfig) -> RenderedFrame {
+    let rows = config.rows.max(1);
+    let cols = config.cols.max(1);
+    let sub_rows = rows * 4;
+    let sub_cols = cols * 2;
+    let row_indices: Vec<usize> = (0..sub_rows)
+        .map(|y| y * (frame.height - 1) / sub_rows.saturating_sub(1).max(1))
+        .collect();
+    let col_indices: Vec<usize> = (0..sub_cols)
+        .map(|x| x * (frame.width - 1) / sub_cols.saturating_sub(1).max(1))
+        .collect();
+
+    let mut plain_lines = Vec::with_capacity(rows);
+    let mut color_rows = if config.color_mode == ColorMode::Off {
+        None
+    } else {
+        Some(Vec::with_capacity(rows))
+    };
+    let mut terminal = String::new();
+
+    for row in 0..rows {
+        let mut line = String::with_capacity(cols);
+        let mut color_row = Vec::with_capacity(cols);
+        for col in 0..cols {
+            let mut mask: u8 = 0;
+            let mut r_sum: u32 = 0;
+            let mut g_sum: u32 = 0;
+            let mut b_sum: u32 = 0;
+            for dy in 0..4 {
+                for dx in 0..2 {
+                    let sx = col_indices[col * 2 + dx];
+                    let sy = row_indices[row * 4 + dy];
+                    let adjusted =
+                        adjust_rgb(frame.get(sx, sy), config.contrast, config.brightness);
+                    if adjusted_luma(adjusted, config) >= BRAILLE_THRESHOLD {
+                        mask |= BRAILLE_DOT_BITS[dy][dx];
+                    }
+                    r_sum += adjusted.r as u32;
+                    g_sum += adjusted.g as u32;
+                    b_sum += adjusted.b as u32;
+                }
+            }
+            let ch = char::from_u32(0x2800 | mask as u32).expect("braille codepoint");
+            line.push(ch);
+
+            if config.color_mode != ColorMode::Off {
+                let mean = Rgb::new((r_sum / 8) as u8, (g_sum / 8) as u8, (b_sum / 8) as u8);
+                let display_rgb = config.color_mode.effective_rgb(mean);
+                terminal.push_str(&config.color_mode.ansi_prefix(mean));
+                terminal.push(ch);
+                color_row.push(display_rgb);
+            } else {
+                terminal.push(ch);
+            }
+        }
+        if row + 1 < rows {
+            terminal.push('\n');
+        }
+        plain_lines.push(line);
+        if let Some(rows_acc) = &mut color_rows {
+            rows_acc.push(color_row);
         }
     }
     if config.color_mode != ColorMode::Off {
