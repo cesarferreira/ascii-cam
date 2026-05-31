@@ -6,6 +6,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+#[cfg(feature = "serve")]
+use clap::Subcommand;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
@@ -28,9 +30,61 @@ use crate::render::{
 use crate::screenshot::write_html;
 use crate::ui::{Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar};
 
-#[derive(Parser, Debug)]
+#[cfg(feature = "serve")]
+#[derive(Clone, Debug, Parser)]
+#[command(
+    about = "Broadcast ASCII frames over HTTP",
+    long_about = "Stream the camera as ANSI text. Defaults listen on all interfaces so other \
+                  machines on your LAN or Tailscale can watch.\n\n\
+                  Examples:\n  \
+                  ascii-cam serve --token mytoken\n  \
+                  ascii-cam serve --local\n  \
+                  make serve ARGS=\"--token mytoken\""
+)]
+pub struct ServeArgs {
+    #[arg(long, default_value_t = 8080, help = "HTTP port")]
+    pub port: u16,
+    #[arg(
+        long,
+        default_value = "0.0.0.0",
+        help = "Address to bind (default: all interfaces; use with --local for loopback only)"
+    )]
+    pub bind: String,
+    #[arg(
+        long,
+        help = "Listen on 127.0.0.1 only — not reachable from other machines",
+        conflicts_with = "bind"
+    )]
+    pub local: bool,
+    #[arg(
+        long,
+        help = "Shared secret; viewers must pass ?token=VALUE on /stream and /"
+    )]
+    pub token: Option<String>,
+    #[arg(long, default_value_t = 120, help = "ASCII frame width in characters")]
+    pub cols: usize,
+    #[arg(long, default_value_t = 40, help = "ASCII frame height in characters")]
+    pub rows: usize,
+    #[arg(
+        long,
+        help = "Send a full terminal clear (\\x1b[2J) once when each viewer connects"
+    )]
+    pub clear_each_frame: bool,
+}
+
+#[cfg(feature = "serve")]
+#[derive(Clone, Debug, Subcommand)]
+pub enum Command {
+    /// Broadcast ASCII frames over HTTP (curl or browser)
+    Serve(ServeArgs),
+}
+
+#[derive(Clone, Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
 pub struct Cli {
+    #[cfg(feature = "serve")]
+    #[command(subcommand)]
+    pub command: Option<Command>,
     #[arg(long, value_enum, default_value_t = Resolution::Medium)]
     pub resolution: Resolution,
     #[arg(long)]
@@ -63,7 +117,7 @@ pub struct Cli {
     pub char_aspect: f32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum RampChoice {
     Long,
     Short,
@@ -91,6 +145,10 @@ impl std::fmt::Display for RampChoice {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
+    #[cfg(feature = "serve")]
+    if let Some(Command::Serve(args)) = cli.command.clone() {
+        return crate::serve::run(&cli, args);
+    }
     if let Some(path) = cli.play {
         return play_recording(path);
     }
