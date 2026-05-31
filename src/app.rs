@@ -1,5 +1,7 @@
 use std::io::{Write, stdout};
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -192,6 +194,7 @@ impl LiveApp {
         let mut capture =
             FfmpegCapture::spawn(self.platform, self.cli.camera, self.cli.fps, cam_w, cam_h)?;
         let _terminal = TerminalGuard::enter()?;
+        let key_events = spawn_key_reader();
         let mut out = stdout();
         let mut frame_counter = 0_u32;
         let mut fps_window = Instant::now();
@@ -199,10 +202,8 @@ impl LiveApp {
         let started = Instant::now();
 
         loop {
-            while event::poll(Duration::from_millis(0))? {
-                if let Event::Key(key) = event::read()?
-                    && self.handle_key(key)?
-                {
+            while let Ok(key) = key_events.try_recv() {
+                if self.handle_key(key)? {
                     return Ok(());
                 }
             }
@@ -475,6 +476,24 @@ impl LiveApp {
         .collect::<Vec<_>>()
         .join("\n")
     }
+}
+
+fn spawn_key_reader() -> Receiver<KeyEvent> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        loop {
+            match event::read() {
+                Ok(Event::Key(key)) => {
+                    if tx.send(key).is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+    rx
 }
 
 fn pick_camera_interactive(platform: Platform) -> Result<u32> {
