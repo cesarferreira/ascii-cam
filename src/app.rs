@@ -17,6 +17,7 @@ use crossterm::terminal::{
 
 use crate::capture::{
     CameraDevice, FfmpegCapture, Platform, Resolution, discover_cameras, ensure_supported_platform,
+    resolve_capture_dimensions,
 };
 use crate::color::ColorMode;
 use crate::recording::{RecordingDecoder, RecordingEncoder, RecordingOptions};
@@ -193,6 +194,8 @@ impl LiveApp {
 
     fn run(mut self) -> Result<()> {
         let (cam_w, cam_h) = self.cli.resolution.dimensions();
+        let (cam_w, cam_h) =
+            resolve_capture_dimensions(self.platform, self.cli.camera, cam_w, cam_h);
         let mut capture =
             FfmpegCapture::spawn(self.platform, self.cli.camera, self.cli.fps, cam_w, cam_h)?;
         let _terminal = TerminalGuard::enter()?;
