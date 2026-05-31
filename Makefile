@@ -1,4 +1,4 @@
-.PHONY: all build build-release release install install-serve clean test test-unit test-integration check fmt lint run serve demo
+.PHONY: all build build-release release install clean test test-unit test-integration check fmt lint run serve demo
 
 ARGS ?=
 LEVEL ?= minor
@@ -22,13 +22,9 @@ release:
 install:
 	CARGO_INCREMENTAL=0 cargo install --path . --locked --bins
 
-# Install with network streaming (ascii-cam serve)
-install-serve:
-	CARGO_INCREMENTAL=0 cargo install --path . --locked --bins --features serve
-
 # Stream over HTTP (usage: make serve ARGS="--token mytoken")
 serve:
-	cargo run --features serve -- serve $(ARGS)
+	cargo run -- serve $(ARGS)
 
 # Clean build artifacts
 clean:
@@ -37,7 +33,6 @@ clean:
 # Run all tests
 test:
 	cargo test
-	cargo test --features serve
 
 # Run library and binary tests only
 test-unit:
@@ -50,9 +45,7 @@ test-integration:
 # Run check, tests, and clippy
 check:
 	cargo check
-	cargo check --features serve
 	cargo test
-	cargo test --features serve
 	cargo clippy --all-targets --all-features -- -D warnings
 
 # Format code

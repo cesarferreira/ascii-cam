@@ -5,6 +5,5 @@ pub mod frame;
 pub mod recording;
 pub mod render;
 pub mod screenshot;
-#[cfg(feature = "serve")]
 pub mod serve;
 pub mod ui;

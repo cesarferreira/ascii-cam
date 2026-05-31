@@ -5,9 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
-#[cfg(feature = "serve")]
-use clap::Subcommand;
+use clap::{Args, Parser, Subcommand};
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
@@ -30,8 +28,7 @@ use crate::render::{
 use crate::screenshot::write_html;
 use crate::ui::{Shortcut, center_ansi_line, center_block, pad_ansi_line, shortcut_bar};
 
-#[cfg(feature = "serve")]
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Args)]
 #[command(
     about = "Broadcast ASCII frames over HTTP",
     long_about = "Stream the camera as ANSI text. Defaults listen on all interfaces so other \
@@ -72,7 +69,6 @@ pub struct ServeArgs {
     pub clear_each_frame: bool,
 }
 
-#[cfg(feature = "serve")]
 #[derive(Clone, Debug, Subcommand)]
 pub enum Command {
     /// Broadcast ASCII frames over HTTP (curl or browser)
@@ -82,7 +78,6 @@ pub enum Command {
 #[derive(Clone, Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
 pub struct Cli {
-    #[cfg(feature = "serve")]
     #[command(subcommand)]
     pub command: Option<Command>,
     #[arg(long, value_enum, default_value_t = Resolution::Medium)]
@@ -145,7 +140,6 @@ impl std::fmt::Display for RampChoice {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
-    #[cfg(feature = "serve")]
     if let Some(Command::Serve(args)) = cli.command.clone() {
         return crate::serve::run(&cli, args);
     }

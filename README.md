@@ -67,13 +67,6 @@ Or use the Makefile:
 make install
 ```
 
-To include network streaming (`ascii-cam serve`), install with the `serve` feature:
-
-```bash
-make install-serve
-# or: cargo install --path . --locked --features serve
-```
-
 Requirements:
 
 - Rust 1.95+
@@ -143,7 +136,7 @@ in your shell.
 # from a checkout
 make serve ARGS="--token mytoken"
 
-# or, after install-serve
+# or, after install
 ascii-cam serve --token mytoken
 ```
 
@@ -252,8 +245,8 @@ make run ARGS="--resolution low --no-color"
 make serve ARGS="--token mytoken"
 ```
 
-`make check` and `make test` also build and test the `serve` feature. The default
-`cargo build` stays lean without HTTP dependencies.
+`make check` and `make test` include the streaming server because `ascii-cam serve`
+is part of the normal build.
 
 Run the full local verification flow:
 

@@ -1,5 +1,3 @@
-#![cfg(feature = "serve")]
-
 use ascii_cam::app::ServeArgs;
 use ascii_cam::color::ColorMode;
 use ascii_cam::render::RenderedFrame;
