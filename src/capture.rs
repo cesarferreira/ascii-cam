@@ -72,7 +72,6 @@ impl FfmpegCapture {
 
         let mut child = Command::new("ffmpeg")
             .args(&args)
-            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
