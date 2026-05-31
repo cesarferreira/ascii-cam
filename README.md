@@ -17,6 +17,8 @@
     <a href="#controls">Controls</a>
     &nbsp;·&nbsp;
     <a href="#recording">Recording</a>
+    &nbsp;·&nbsp;
+    <a href="#streaming">Streaming</a>
   </p>
 
   <br>
@@ -63,6 +65,13 @@ Or use the Makefile:
 
 ```bash
 make install
+```
+
+To include network streaming (`ascii-cam serve`), install with the `serve` feature:
+
+```bash
+make install-serve
+# or: cargo install --path . --locked --features serve
 ```
 
 Requirements:
@@ -120,6 +129,60 @@ ascii-cam --play session.ascicam
 ```
 
 From a checkout, replace `ascii-cam` with `cargo run --release --`.
+
+<a id="streaming"></a>
+## Streaming
+
+Broadcast the live ASCII feed over HTTP so other machines can watch with
+`curl` or a browser — useful on a LAN, over Tailscale, or from a Raspberry Pi
+in your shell.
+
+**Serve** on the machine with the camera:
+
+```bash
+# from a checkout
+make serve ARGS="--token mytoken"
+
+# or, after install-serve
+ascii-cam serve --token mytoken
+```
+
+By default, `serve` listens on **all interfaces** (`0.0.0.0`). Use `--local` for
+loopback only (`127.0.0.1`). On startup, ascii-cam prints copy-paste URLs for
+your LAN IP (when detectable) and for localhost.
+
+Common options:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--port` | `8080` | HTTP port |
+| `--token` | _(none)_ | Require `?token=VALUE` on `/` and `/stream` |
+| `--local` | off | Listen on `127.0.0.1` only |
+| `--bind` | `0.0.0.0` | Bind address (ignored when `--local` is set) |
+| `--cols` / `--rows` | `120` × `40` | Fixed render size for all viewers |
+
+Capture/render flags (`--resolution`, `--fps`, `--color`, `--contrast`, etc.)
+work the same as live mode — pass them **before** `serve`:
+
+```bash
+ascii-cam --resolution medium --fps 15 serve --token mytoken
+```
+
+**Consume** from another machine (replace `HOST` with the server IP, e.g. a
+Tailscale address):
+
+```bash
+# terminal (Ctrl+C to stop; stream stays open until you quit)
+curl -N "http://HOST:8080/stream?token=mytoken"
+```
+
+```text
+# browser
+http://HOST:8080/?token=mytoken
+```
+
+Without a token, omit `?token=...`. If the server warns that no token is set,
+anyone who can reach the port can watch — use `--token` on untrusted networks.
 
 <a id="controls"></a>
 ## Controls
@@ -186,7 +249,11 @@ make check
 make test
 make lint
 make run ARGS="--resolution low --no-color"
+make serve ARGS="--token mytoken"
 ```
+
+`make check` and `make test` also build and test the `serve` feature. The default
+`cargo build` stays lean without HTTP dependencies.
 
 Run the full local verification flow:
 
