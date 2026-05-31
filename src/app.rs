@@ -355,13 +355,27 @@ impl LiveApp {
         image_rows: u16,
         fps_actual: f32,
     ) -> Result<()> {
-        execute!(out, MoveTo(0, 0), Clear(ClearType::All))?;
         if self.show_help {
-            execute!(out, Print(self.help_overlay(term_cols)))?;
+            execute!(
+                out,
+                MoveTo(0, 0),
+                Clear(ClearType::All),
+                Print(self.help_overlay(term_cols))
+            )?;
         } else if self.show_settings {
-            execute!(out, Print(self.settings_overlay(term_cols)))?;
+            execute!(
+                out,
+                MoveTo(0, 0),
+                Clear(ClearType::All),
+                Print(self.settings_overlay(term_cols))
+            )?;
         } else {
-            execute!(out, Print(rendered.terminal_text()))?;
+            execute!(
+                out,
+                MoveTo(0, 0),
+                Print(clear_line_endings(rendered.terminal_text())),
+                Clear(ClearType::FromCursorDown)
+            )?;
             execute!(
                 out,
                 MoveTo(0, image_rows),
@@ -507,4 +521,16 @@ fn pad(mut line: String, width: usize) -> String {
 
 fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
+}
+
+fn clear_line_endings(text: String) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(line);
+        out.push_str("\x1b[K");
+    }
+    out
 }
