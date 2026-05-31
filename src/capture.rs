@@ -154,7 +154,7 @@ pub fn build_ffmpeg_args(
     height: usize,
 ) -> Vec<String> {
     let platform = platform.detect();
-    let mut args: Vec<String> = vec!["-hide_banner", "-loglevel", "error"]
+    let mut args: Vec<String> = vec!["-hide_banner", "-nostdin", "-loglevel", "error"]
         .into_iter()
         .map(str::to_string)
         .collect();
