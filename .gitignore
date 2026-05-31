@@ -24,3 +24,11 @@ rustc-ice-*.txt
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# --- ascii-cam local output ---
+.test-tmp/
+.docker-cache/
+*.ascicam
+screenshot-*.html
+snapshot-*.ascicam
+recording-*.ascicam
+.DS_Store
