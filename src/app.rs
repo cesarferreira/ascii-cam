@@ -2,7 +2,7 @@ use std::io::{Write, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
@@ -13,7 +13,9 @@ use crossterm::terminal::{
     enable_raw_mode, size,
 };
 
-use crate::capture::{FfmpegCapture, Platform, Resolution, ensure_supported_platform};
+use crate::capture::{
+    CameraDevice, FfmpegCapture, Platform, Resolution, discover_cameras, ensure_supported_platform,
+};
 use crate::color::ColorMode;
 use crate::recording::{RecordingDecoder, RecordingEncoder, RecordingOptions};
 use crate::render::{
@@ -21,6 +23,7 @@ use crate::render::{
     compute_render_size, render_frame,
 };
 use crate::screenshot::write_html;
+use crate::ui::{Shortcut, pad_ansi_line, shortcut_bar};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Real-time ASCII camera for the terminal")]
@@ -29,6 +32,8 @@ pub struct Cli {
     pub resolution: Resolution,
     #[arg(long, default_value_t = 0)]
     pub camera: u32,
+    #[arg(long, help = "Open an interactive camera picker before starting")]
+    pub pick_camera: bool,
     #[arg(long, value_enum, default_value_t = Platform::Auto)]
     pub platform: Platform,
     #[arg(long, default_value_t = 30)]
@@ -86,7 +91,11 @@ pub fn run(cli: Cli) -> Result<()> {
     if let Some(path) = cli.play {
         return play_recording(path);
     }
-    LiveApp::new(cli)?.run()
+    let mut app = LiveApp::new(cli)?;
+    if app.cli.pick_camera {
+        app.cli.camera = pick_camera_interactive(app.platform)?;
+    }
+    app.run()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -402,11 +411,19 @@ impl LiveApp {
             self.rotation * 90,
             if self.invert { "on" } else { "off" }
         );
-        let line3 =
-            " 1 invert  2 rotate  3 record  4 capture  5 preset  s settings  h help  q quit";
+        let line3 = shortcut_bar(&[
+            Shortcut::new("1", "invert"),
+            Shortcut::new("2", "rotate"),
+            Shortcut::new("3", "record"),
+            Shortcut::new("4", "capture"),
+            Shortcut::new("5", "preset"),
+            Shortcut::new("s", "settings"),
+            Shortcut::new("h", "help"),
+            Shortcut::new("q", "quit"),
+        ]);
         [line1, line2, line3.to_string()]
             .into_iter()
-            .map(|line| pad(line, term_cols as usize))
+            .map(|line| pad_ansi_line(&line, term_cols as usize))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -426,7 +443,7 @@ impl LiveApp {
             "q quit",
         ]
         .into_iter()
-        .map(|line| pad(line.to_string(), term_cols as usize))
+        .map(|line| pad_ansi_line(line, term_cols as usize))
         .collect::<Vec<_>>()
         .join("\n")
     }
@@ -446,10 +463,56 @@ impl LiveApp {
             "s or Esc close",
         ]
         .into_iter()
-        .map(|line| pad(line.to_string(), term_cols as usize))
+        .map(|line| pad_ansi_line(line, term_cols as usize))
         .collect::<Vec<_>>()
         .join("\n")
     }
+}
+
+fn pick_camera_interactive(platform: Platform) -> Result<u32> {
+    let devices = discover_cameras(platform)?;
+    if devices.is_empty() {
+        bail!("no cameras discovered; pass --camera N to choose a camera index manually");
+    }
+
+    let _terminal = TerminalGuard::enter()?;
+    let mut out = stdout();
+    let mut selected = 0_usize;
+    loop {
+        let (cols, _) = size()?;
+        execute!(
+            out,
+            MoveTo(0, 0),
+            Clear(ClearType::All),
+            Print(camera_picker_view(&devices, selected, cols as usize))
+        )?;
+        out.flush()?;
+
+        if let Event::Key(key) = event::read()? {
+            match key.code {
+                KeyCode::Up => selected = selected.saturating_sub(1),
+                KeyCode::Down => selected = (selected + 1).min(devices.len() - 1),
+                KeyCode::Enter => return Ok(devices[selected].index),
+                KeyCode::Esc | KeyCode::Char('q') => bail!("camera picker cancelled"),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn camera_picker_view(devices: &[CameraDevice], selected: usize, width: usize) -> String {
+    let mut lines = vec![
+        pad_ansi_line("ASCII-CAM CAMERA", width),
+        pad_ansi_line("", width),
+        pad_ansi_line("Use Up/Down, Enter to select, q to cancel", width),
+        pad_ansi_line("", width),
+    ];
+    for (index, device) in devices.iter().enumerate() {
+        let marker = if index == selected { ">" } else { " " };
+        let line = format!("{marker} [{}] {}", device.index, device.name);
+        lines.push(pad_ansi_line(&line, width));
+    }
+    lines.join("\n")
 }
 
 fn play_recording(path: PathBuf) -> Result<()> {
@@ -510,13 +573,6 @@ fn timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-fn pad(mut line: String, width: usize) -> String {
-    if line.len() > width {
-        line.truncate(width);
-    }
-    format!("{line:<width$}\x1b[K")
 }
 
 fn on_off(value: bool) -> &'static str {

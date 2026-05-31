@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::Read;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -8,6 +9,12 @@ use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 
 use crate::frame::Frame;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CameraDevice {
+    pub index: u32,
+    pub name: String,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Platform {
@@ -132,6 +139,13 @@ pub fn ensure_supported_platform(platform: Platform) -> Result<Platform> {
     }
 }
 
+pub fn discover_cameras(platform: Platform) -> Result<Vec<CameraDevice>> {
+    match platform.detect() {
+        Platform::Macos => discover_macos_cameras(),
+        Platform::Linux | Platform::Auto => discover_linux_cameras(),
+    }
+}
+
 pub fn build_ffmpeg_args(
     platform: Platform,
     camera: u32,
@@ -207,4 +221,76 @@ fn spawn_stderr_reader(mut stderr_pipe: impl Read + Send + 'static, stderr: Arc<
             }
         }
     });
+}
+
+fn discover_macos_cameras() -> Result<Vec<CameraDevice>> {
+    let output = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-f",
+            "avfoundation",
+            "-list_devices",
+            "true",
+            "-i",
+            "",
+        ])
+        .output()
+        .with_context(|| "failed to run ffmpeg to list macOS cameras")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(parse_avfoundation_video_devices(&stderr))
+}
+
+fn discover_linux_cameras() -> Result<Vec<CameraDevice>> {
+    let mut devices = Vec::new();
+    for entry in fs::read_dir("/dev").with_context(|| "failed to read /dev for video devices")? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(number) = name.strip_prefix("video") else {
+            continue;
+        };
+        let Ok(index) = number.parse::<u32>() else {
+            continue;
+        };
+        let label = fs::read_to_string(format!("/sys/class/video4linux/{name}/name"))
+            .map(|value| value.trim().to_string())
+            .unwrap_or_else(|_| format!("/dev/{name}"));
+        devices.push(CameraDevice { index, name: label });
+    }
+    devices.sort_by_key(|device| device.index);
+    Ok(devices)
+}
+
+pub fn parse_avfoundation_video_devices(stderr: &str) -> Vec<CameraDevice> {
+    let mut in_video_section = false;
+    let mut devices = Vec::new();
+    for line in stderr.lines() {
+        if line.contains("AVFoundation video devices:") {
+            in_video_section = true;
+            continue;
+        }
+        if line.contains("AVFoundation audio devices:") {
+            break;
+        }
+        if !in_video_section {
+            continue;
+        }
+        let Some(bracket_start) = line.rfind('[') else {
+            continue;
+        };
+        let Some(relative_end) = line[bracket_start + 1..].find(']') else {
+            continue;
+        };
+        let bracket_end = bracket_start + 1 + relative_end;
+        let Ok(index) = line[bracket_start + 1..bracket_end].parse::<u32>() else {
+            continue;
+        };
+        let name = line[bracket_end + 1..].trim();
+        if !name.is_empty() {
+            devices.push(CameraDevice {
+                index,
+                name: name.to_string(),
+            });
+        }
+    }
+    devices
 }

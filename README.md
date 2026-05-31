@@ -101,6 +101,12 @@ Pick a different camera index:
 ascii-cam --camera 1
 ```
 
+Open an interactive camera picker before starting:
+
+```bash
+ascii-cam --pick-camera
+```
+
 Record while viewing:
 
 ```bash

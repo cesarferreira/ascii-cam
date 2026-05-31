@@ -5,3 +5,4 @@ pub mod frame;
 pub mod recording;
 pub mod render;
 pub mod screenshot;
+pub mod ui;
